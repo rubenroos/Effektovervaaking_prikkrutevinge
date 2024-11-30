@@ -15,6 +15,9 @@ Sys.setlocale(locale='no_NB.utf8')
 ```{r}
 library(readxl)
 library(tidyverse)
+library(lmerTest)
+library(DHARMa)
+library(emmeans)
 ```
 
 ## Importing data
@@ -68,8 +71,8 @@ treatment_summary <- plot_year_summary %>%
 # Merge the result back to the original dataset to retain all rows
 dat <- dat %>%
   left_join(
-    treatment_summary %>% select(plot_id2, treatment_received_until_2024),
-    by = c("plot_id2"))
+    treatment_summary %>% select(year, plot_id2, treatment_received_until_2024),
+    by = c("year", "plot_id2"))
 
 #Now we can use the number of treatments received until 2024 as a grouping variable in figures. 
 ```
@@ -94,6 +97,7 @@ labels <- c("RT" = "Telefonstolpen", "RU" = "Utedassen")
 
 # Generate the plot
 p.veg_height <- dat_agg %>% 
+  filter(!grepl("S", as.character(plot_id2), ignore.case = TRUE)) %>%
   group_by(polygon_id, year, treatment_received_until_2024) %>% 
   summarize(mean = mean(vegheight_mean), 
             sd = sd(vegheight_mean),
@@ -122,6 +126,7 @@ Make same figure for the number of smalkjempe
 ```{r}
 
 p.host <- dat_agg %>% 
+  filter(!grepl("S", as.character(plot_id2), ignore.case = TRUE)) %>%
   group_by(polygon_id, year, treatment_received_until_2024) %>%
   summarize(mean = mean(count_plantago), 
             sd = sd(count_plantago),
@@ -140,15 +145,98 @@ p.host <- dat_agg %>%
   scale_y_continuous(expand = c(0, 0))
 
 p.host
+
+
+ggsave(plot = p.host, filename = "P:/154027_effektovervaking_av_trua_arter_og_naturtyper_2024/07 Prikkrutevinge/Effektovervaaking_prikkrutevinge/Output/prikkrutevinge_smalkjemperosetter.jpeg", width = 21, height = 14, units = "cm")
 ```
 
 Make same figure for number of flowering stems
 
 ```{r}
 
-dat %>% 
-  filter(!as.character(plot_id2) %in% 'S')
+p.pollinator <- dat %>% 
+  filter(!grepl("S", as.character(plot_id2), ignore.case = TRUE)) %>% #Remove spinn ruter
+  group_by(year, plot_id2) %>% 
+  summarize(total_flowers = sum(count_floral_stems, na.rm = TRUE), 
+            treatment_received_until_2024 = first(treatment_received_until_2024), 
+            polygon_id = first(polygon_id)) %>% 
+  group_by(polygon_id, year, treatment_received_until_2024) %>% 
+  summarize(mean = mean(total_flowers), 
+            sd = sd(total_flowers),
+            n = n(),
+            se = sd / sqrt(n)) %>% 
+  ggplot(aes(x = as.factor(year), y = mean, fill = as.factor(treatment_received_until_2024))) +
+  geom_bar(position = "dodge", stat = "identity") +
+  geom_errorbar(aes(ymin = mean-se, ymax = mean+se), width = 0.2, position = position_dodge(width=0.9)) +
+  facet_wrap(~ polygon_id, labeller = labeller(polygon_id = labels)) +  # Apply custom labels
+  theme_classic() +
+  theme(strip.background = element_blank()) +
+  guides(fill = guide_legend(title="Antall ganger skjøtsel")) +
+  theme(legend.position="bottom")+
+  scale_fill_manual(values=c("#004F71","#E57200","#7A9A01")) +
+  labs(x = "År", y = "Antall blomsterstand av pollinatorplanter") +
+  scale_y_continuous(expand = c(0, 0))
+
+ggsave(plot = p.pollinator, filename = "P:/154027_effektovervaking_av_trua_arter_og_naturtyper_2024/07 Prikkrutevinge/Effektovervaaking_prikkrutevinge/Output/prikkrutevinge_pollinator_planter.jpeg", width = 21, height = 14, units = "cm")
 
 
+```
+
+Same figure for standing dead litter
+
+```{r}
+p.litter <- dat_agg %>% 
+  filter(!grepl("S", as.character(plot_id2), ignore.case = TRUE)) %>% #Remove spinn ruter
+  group_by(polygon_id, year, treatment_received_until_2024) %>% 
+  summarize(mean = mean(cover_standing_litter), 
+            sd = sd(cover_standing_litter),
+            n = n(),
+            se = sd / sqrt(n)) %>% 
+  ggplot(aes(x = as.factor(year), y = mean, fill = as.factor(treatment_received_until_2024))) +
+  geom_bar(position = "dodge", stat = "identity") +
+  geom_errorbar(aes(ymin = mean-se, ymax = mean+se), width = 0.2, position = position_dodge(width=0.9)) +
+  facet_wrap(~ polygon_id, labeller = labeller(polygon_id = labels)) +  # Apply custom labels
+  theme_classic() +
+  theme(strip.background = element_blank()) +
+  guides(fill = guide_legend(title="Antall ganger skjøtsel")) +
+  theme(legend.position="bottom")+
+  scale_fill_manual(values=c("#004F71","#E57200","#7A9A01")) +
+  labs(x = "År", y = "Dekning stående død biomasse (%)") +
+  scale_y_continuous(expand = c(0, 0))
+
+ggsave(plot = p.litter, filename = "P:/154027_effektovervaking_av_trua_arter_og_naturtyper_2024/07 Prikkrutevinge/Effektovervaaking_prikkrutevinge/Output/prikkrutevinge_standing_litter.jpeg", width = 21, height = 14, units = "cm")
+
+```
+
+## Statistics
+
+Vegetation height
+
+```{r}
+#Create data to run model on
+
+# Generate the plot
+dat_height <- dat_agg %>% 
+  filter(!grepl("S", as.character(plot_id2), ignore.case = TRUE)) %>% 
+  select(polygon_id, plot_id2, year, vegheight_mean, treatment_received_until_2024)
+
+
+lm_height <- lmer(data = dat_height, vegheight_mean ~ polygon_id + as.factor(year) * treatment_received_until_2024 + (1| plot_id2))
+summary(lm_height)
+
+plot(lm_height)
+qqnorm(residuals(lm_height))
+plotQQunif(lm_height)#test is not significant, but looks a bit wonky visually
+plotResiduals(lm_height)#significant but doesn't look too bad
+# Obtain estimated marginal means (EMMs) for the interaction
+emm_interaction <- emmeans(lm_height, ~polygon_id + as.factor(year) * treatment_received_until_2024)
+# Perform pairwise comparisons
+pairwise_comparisons <- contrast(emm_interaction, method = "pairwise")
+# View results
+summary(pairwise_comparisons)
+
+group_diff_time1 <- emmeans(lm_height, ~ as.factor(year) | treatment_received_until_2024)
+pairwise_group_time1 <- contrast(group_diff_time1, method = "pairwise")
+summary(pairwise_group_time1)
 
 ```
