@@ -1,0 +1,154 @@
+---
+title: "Prikkrutevinge 2024"
+format: html
+editor: visual
+---
+
+## Language settings
+
+```{r}
+Sys.setlocale(locale='no_NB.utf8')
+```
+
+## Loading required packages
+
+```{r}
+library(readxl)
+library(tidyverse)
+```
+
+## Importing data
+
+```{r}
+
+dat <- readxl::read_excel("P:/154027_effektovervaking_av_trua_arter_og_naturtyper_2024/07 Prikkrutevinge/Effektovervaaking_prikkrutevinge/Data/Effekt_prikkrutevinge_2024_cleaned.xlsx")
+
+```
+
+## Data calculations
+
+```{r}
+#We want to calculate average vegetation height per plot, per year
+
+dat <- dat %>% 
+  group_by(year, plot_id2) %>% 
+  rowwise() %>%
+  mutate(vegheight_mean = mean(c_across(vegheight1:vegheight4), na.rm  = TRUE)) %>%
+  ungroup() 
+
+#We want to calculate the number of species in flower
+dat <- dat %>% 
+  group_by(year, plot_id2) %>%
+  mutate(abundance_flowering = n_distinct(species[count_floral_stems > 0]))
+
+#For each plot, we want to calculate how often it was mown between 2022 and 2024. 
+#This requires some steps
+#Remove species-level duplication by summarizing data at the plot-year level
+plot_year_summary <- dat %>%
+  group_by(plot_id2, year) %>%
+  summarize(
+    treatment_t0 = first(treatment_t0), # Or any appropriate rule (e.g., unique())
+    treatment_t1 = first(treatment_t1),
+    treatment_t2 = first(treatment_t2),
+    treatment_t2 = first(treatment_t2),
+    .groups = "drop"
+  )
+
+# Calculate the total treatments received for each plot
+treatment_summary <- plot_year_summary %>%
+   group_by(plot_id2) %>%
+  mutate(
+    treatment_received_until_2024 = sum(
+      year == "2024" & c_across(starts_with("treatment_t")) == "slått",
+      na.rm = TRUE
+    )
+  ) %>%
+  ungroup()
+
+# Merge the result back to the original dataset to retain all rows
+dat <- dat %>%
+  left_join(
+    treatment_summary %>% select(plot_id2, treatment_received_until_2024),
+    by = c("plot_id2"))
+
+#Now we can use the number of treatments received until 2024 as a grouping variable in figures. 
+```
+
+## Create figures
+
+```{r}
+#For making the figures, we can aggregate and just keep the first species
+
+dat_agg <- dat %>% 
+  group_by(plot_id2, year) %>% 
+  filter(!duplicated(plot_id2))
+
+```
+
+Make figure for vegetation height
+
+```{r}
+
+dat_agg$polygon_id <- as.factor(dat_agg$polygon_id)
+labels <- c("RT" = "Telefonstolpen", "RU" = "Utedassen")
+
+# Generate the plot
+p.veg_height <- dat_agg %>% 
+  group_by(polygon_id, year, treatment_received_until_2024) %>% 
+  summarize(mean = mean(vegheight_mean), 
+            sd = sd(vegheight_mean),
+            n = n(),
+            se = sd / sqrt(n)) %>% 
+  ggplot(aes(x = as.factor(year), y = mean, fill = as.factor(treatment_received_until_2024))) +
+  geom_bar(position = "dodge", stat = "identity") +
+  geom_errorbar(aes(ymin = mean-se, ymax = mean+se), width = 0.2, position = position_dodge(width=0.9)) +
+  facet_wrap(~ polygon_id, labeller = labeller(polygon_id = labels)) +  # Apply custom labels
+  theme_classic() +
+  theme(strip.background = element_blank()) +
+  guides(fill = guide_legend(title="Antall ganger skjøtsel")) +
+  theme(legend.position="bottom")+
+  scale_fill_manual(values=c("#004F71","#E57200","#7A9A01")) +
+  labs(x = "År", y = "Vegetasjonshøyde (cm)") +
+  scale_y_continuous(expand = c(0, 0))
+
+# Print the plot
+p.veg_height
+
+ggsave(plot = p.veg_height, filename = "P:/154027_effektovervaking_av_trua_arter_og_naturtyper_2024/07 Prikkrutevinge/Effektovervaaking_prikkrutevinge/Output/prikkrutevinge_veg_height.jpeg", width = 21, height = 14, units = "cm")
+```
+
+Make same figure for the number of smalkjempe
+
+```{r}
+
+p.host <- dat_agg %>% 
+  group_by(polygon_id, year, treatment_received_until_2024) %>%
+  summarize(mean = mean(count_plantago), 
+            sd = sd(count_plantago),
+            n = n(),
+            se = sd / sqrt(n)) %>% 
+  ggplot(aes(x = as.factor(year), y = mean, fill = as.factor(treatment_received_until_2024))) +
+  geom_bar(position = "dodge", stat = "identity") +
+  geom_errorbar(aes(ymin = mean-se, ymax = mean+se), width = 0.2, position = position_dodge(width=0.9)) +
+  facet_wrap(~ polygon_id, labeller = labeller(polygon_id = labels)) +  # Apply custom labels
+  theme_classic() +
+  theme(strip.background = element_blank()) +
+  guides(fill = guide_legend(title="Antall ganger skjøtsel")) +
+  theme(legend.position="bottom")+
+  scale_fill_manual(values=c("#004F71","#E57200","#7A9A01")) +
+  labs(x = "År", y = "Antall smalkjemperosetter") +
+  scale_y_continuous(expand = c(0, 0))
+
+p.host
+```
+
+Make same figure for number of flowering stems
+
+```{r}
+
+dat %>% 
+  filter(!as.character(plot_id2) %in% 'S')
+
+
+
+```
